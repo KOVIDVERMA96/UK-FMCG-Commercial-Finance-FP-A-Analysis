@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sales and cost variance</title>
+<style>
+  :root {
+    --bg: #f9f9f7; --panel: #ffffff; --fg: #1b1b1b; --muted: #6b6b68;
+    --line: #e4e4df; --bar: #2a78d6; --bad: #c0392b; --axis: #b5b5b0;
+    --grid: #ececE7; --tip-bg: #ffffff; --tip-line: #d6d6d0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19; --panel: #232322; --fg: #ececea; --muted: #9b9b96;
+      --line: #3a3a38; --bar: #5b9be6; --bad: #ef6b5e; --axis: #58585a;
+      --grid: #2f2f2d; --tip-bg: #2b2b29; --tip-line: #484845;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 48px; display: flex; flex-direction: column; gap: 24px; }
+  h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: 28px; margin: 0; }
+  h2 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .take { margin: 0; max-width: 72ch; }
+  .take b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+  .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .val { font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .val.bad { color: var(--bad); }
+  .cnote { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .chart { position: relative; width: 100%; min-height: 260px; }
+  .chart svg { display: block; max-width: 100%; }
+  .tip {
+    position: absolute; pointer-events: none; display: none; white-space: nowrap;
+    background: var(--tip-bg); border: 1px solid var(--tip-line); border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  td.bad { color: var(--bad); font-weight: 600; background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  td.total { font-weight: 600; }
+  .def { font-size: 12px; color: var(--muted); max-width: 80ch; margin: 12px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div>
+    <h1>Sales and cost variance</h1>
+    <p class="sub">July and August 2027 · seven SKU-month lines · from the attached workbook</p>
+  </div>
+
+  <p class="take" id="lede">Loading figures…</p>
+
+  <div class="kpis">
+    <div class="card">
+      <div class="lbl">Total Net Revenue</div>
+      <div class="val" id="kpi-net">—</div>
+      <div class="cnote">After trade discounts, all seven lines</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Average Gross Margin %</div>
+      <div class="val" id="kpi-gm">—</div>
+      <div class="cnote">Revenue-weighted. Simple average of lines: <span id="kpi-gm-simple">—</span></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Total Cost Variance</div>
+      <div class="val" id="kpi-var">—</div>
+      <div class="cnote">Standard cost less actual cost, across all volume</div>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Gross margin % by SKU</h2>
+    <p class="note">July and August 2027 combined, weighted by revenue. Hover a bar for its revenue.</p>
+    <div class="chart" id="bar"></div>
+  </section>
+
+  <section class="card">
+    <h2>Cost variance by SKU and month (£)</h2>
+    <p class="note">Red marks an adverse variance: actual unit cost is above standard. Plain cells are favourable.</p>
+    <div class="scroll">
+      <table id="matrix"></table>
+    </div>
+    <p class="def">Cost variance = (standard cost per unit − actual cost per unit) × units sold. Gross margin = net revenue − actual cost, where net revenue = units × selling price − trade discount.</p>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Source rows from the uploaded workbook (Sheet1), inputs only.
+  var RAW = [
+    { date: "2027-08-01", product: "SKU-A",       units: 11000, price: 4.0, discount: 2200, standard: 2.0, actual: 2.25 },
+    { date: "2027-07-01", product: "SKU-A",       units: 12000, price: 4.0, discount: 2500, standard: 2.0, actual: 2.20 },
+    { date: "2027-08-01", product: "SKU-C",       units: 16000, price: 1.5, discount: 0,    standard: 0.9, actual: 1.05 },
+    { date: "2027-07-01", product: "SKU-C",       units: 18000, price: 1.5, discount: 0,    standard: 0.9, actual: 1.00 },
+    { date: "2027-08-01", product: "SKU-B",       units: 30000, price: 1.2, discount: 1800, standard: 0.8, actual: 0.80 },
+    { date: "2027-08-01", product: "SKU-PREMIUM", units: 5000,  price: 10.0, discount: 1000, standard: 4.0, actual: 3.80 },
+    { date: "2027-07-01", product: "SKU-B",       units: 28000, price: 1.2, discount: 1500, standard: 0.8, actual: 0.75 }
+  ];
+
+  // Same arithmetic as the workbook's formulas.
+  var lines = RAW.map(function (r) {
+    var gross = r.units * r.price;
+    var net = gross - r.discount;
+    var actualCost = r.actual * r.units;
+    var gm = net - actualCost;
+    var costVar = (r.standard - r.actual) * r.units;
+    return {
+      date: r.date, product: r.product, net: net, gm: gm,
+      gmPct: net ? gm / net * 100 : 0, costVar: costVar
+    };
+  });
+
+  var totals = (function () {
+    var net = 0, gm = 0, cv = 0, pctSum = 0;
+    lines.forEach(function (l) { net += l.net; gm += l.gm; cv += l.costVar; pctSum += l.gmPct; });
+    return {
+      net: net, gm: gm, cv: cv,
+      gmWeighted: net ? gm / net * 100 : 0,
+      gmSimple: lines.length ? pctSum / lines.length : 0
+    };
+  })();
+
+  var bySku = (function () {
+    var m = {};
+    lines.forEach(function (l) {
+      var g = m[l.product] || (m[l.product] = { product: l.product, net: 0, gm: 0, costVar: 0 });
+      g.net += l.net; g.gm += l.gm; g.costVar += l.costVar;
+    });
+    return Object.keys(m).sort().map(function (k) {
+      var g = m[k];
+      g.gmPct = g.net ? g.gm / g.net * 100 : 0;
+      return g;
+    });
+  })();
+
+  var dates = Array.from(new Set(lines.map(function (l) { return l.date; }))).sort();
+  var products = bySku.slice().sort(function (a, b) { return a.costVar - b.costVar; }).map(function (g) { return g.product; });
+
+  // Formatting helpers.
+  function gbp(n) { return (n < 0 ? "−" : "") + "£" + Math.abs(Math.round(n)).toLocaleString("en-GB"); }
+  function gbpSigned(n) { return (n < 0 ? "−" : "+") + "£" + Math.abs(Math.round(n)).toLocaleString("en-GB"); }
+  function pct(n) { return n.toFixed(1) + "%"; }
+  function monthLabel(d) {
+    return new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+  }
+  function el(id) { return document.getElementById(id); }
+
+  // Headline text and KPI cards.
+  function renderHeadlines() {
+    el("kpi-net").textContent = gbp(totals.net);
+    el("kpi-gm").textContent = pct(totals.gmWeighted);
+    el("kpi-gm-simple").textContent = pct(totals.gmSimple);
+    var varEl = el("kpi-var");
+    varEl.textContent = gbpSigned(totals.cv);
+    varEl.classList.toggle("bad", totals.cv < 0);
+
+    var adv = bySku.filter(function (g) { return g.costVar < 0; })
+      .sort(function (a, b) { return a.costVar - b.costVar; });
+    var advText = adv.map(function (g) { return g.product + " (" + gbpSigned(g.costVar) + ")"; }).join(" and ");
+    el("lede").innerHTML =
+      "Net revenue is <b>" + gbp(totals.net) + "</b> at a <b>" + pct(totals.gmWeighted) +
+      "</b> average gross margin. Total cost variance is <b>" + gbpSigned(totals.cv) +
+      "</b>, where a negative figure is adverse. Adverse lines: " + (advText || "none") + ".";
+  }
+
+  // Matrix: SKU rows, month columns, plus a total column.
+  function renderMatrix() {
+    var head = "<thead><tr><th>SKU</th>" +
+      dates.map(function (d) { return "<th>" + monthLabel(d) + "</th>"; }).join("") +
+      "<th>Total</th></tr></thead>";
+    var body = products.map(function (p) {
+      var cells = dates.map(function (d) {
+        var l = lines.find(function (x) { return x.product === p && x.date === d; });
+        if (!l) return "<td>—</td>";
+        return '<td class="' + (l.costVar < 0 ? "bad" : "") + '">' + gbpSigned(l.costVar) + "</td>";
+      }).join("");
+      var t = bySku.find(function (g) { return g.product === p; }).costVar;
+      return "<tr><td><b>" + p + "</b></td>" + cells +
+        '<td class="total ' + (t < 0 ? "bad" : "") + '">' + gbpSigned(t) + "</td></tr>";
+    }).join("");
+    el("matrix").innerHTML = head + "<tbody>" + body + "</tbody>";
+  }
+
+  // Bar chart of gross margin % by SKU, drawn as SVG.
+  function renderBars() {
+    var box = el("bar");
+    box.innerHTML = "";
+    var W = Math.max(box.clientWidth, 320), H = 260;
+    var m = { top: 28, right: 12, bottom: 40, left: 44 };
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Bar chart of gross margin percent by SKU, July and August 2027 combined");
+    box.appendChild(svg);
+
+    var maxVal = Math.max.apply(null, bySku.map(function (g) { return g.gmPct; }));
+    var top = Math.ceil(Math.max(70, maxVal + 5) / 10) * 10;
+    var innerW = W - m.left - m.right, innerH = H - m.top - m.bottom;
+    var band = innerW / bySku.length;
+    var barW = band * 0.6;
+    function yOf(v) { return m.top + innerH - (v / top) * innerH; }
+
+    function make(tag, attrs, text) {
+      var n = document.createElementNS(NS, tag);
+      Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+      if (text != null) n.textContent = text;
+      svg.appendChild(n);
+      return n;
+    }
+
+    // Gridlines and y-axis labels.
+    for (var t = 0; t <= top; t += top / 4) {
+      make("line", { x1: m.left, x2: W - m.right, y1: yOf(t), y2: yOf(t), stroke: "var(--grid)" });
+      make("text", { x: m.left - 8, y: yOf(t) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, Math.round(t) + "%");
+    }
+    make("line", { x1: m.left, x2: W - m.right, y1: m.top + innerH, y2: m.top + innerH, stroke: "var(--axis)" });
+
+    var tip = document.createElement("div");
+    tip.className = "tip";
+    box.appendChild(tip);
+
+    bySku.forEach(function (g, i) {
+      var x = m.left + i * band + (band - barW) / 2;
+      var y = yOf(g.gmPct);
+      var rect = make("rect", { x: x, y: y, width: barW, height: m.top + innerH - y, rx: 3, fill: "var(--bar)" });
+      rect.addEventListener("mousemove", function (e) {
+        var b = box.getBoundingClientRect();
+        tip.style.display = "block";
+        tip.style.left = Math.min(e.clientX - b.left + 12, W - 220) + "px";
+        tip.style.top = Math.max(e.clientY - b.top - 48, 0) + "px";
+        tip.textContent = g.product + ": " + pct(g.gmPct) + " margin on " + gbp(g.net) + " net revenue";
+      });
+      rect.addEventListener("mouseleave", function () { tip.style.display = "none"; });
+      make("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", "font-size": 12, fill: "var(--fg)" }, pct(g.gmPct));
+      make("text", { x: x + barW / 2, y: m.top + innerH + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, g.product);
+    });
+  }
+
+  function renderAll() { renderHeadlines(); renderBars(); renderMatrix(); }
+
+  renderAll();
+  var resizeTimer;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderBars, 120);
+  });
+})();
+</script>
+</body>
+</html>
