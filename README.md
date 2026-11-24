@@ -1,4 +1,3 @@
-# UK-FMCG-Commercial-Finance-FP-A-Analysis
 # UK FMCG Commercial Finance & FP&A Analysis
 
 An end-to-end commercial finance portfolio project modeling marginal P&L performance, standard vs. actual cost variances, seasonality dynamics, and customer-level logistics profitability across UK grocery channels.
